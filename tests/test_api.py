@@ -28,12 +28,17 @@ def sample_payload():
             "recipients": [{"name": "Avery Shah", "email": "avery@example.com", "completion_date": "2026-05-12"}]}
 
 
+def get_finished_job(payload):
+    created = client.post("/api/v1/jobs", json=payload).json()
+    return client.get("/api/v1/jobs/" + created["job_id"]).json()
+
+
 def test_create_job_and_generation_status():
     response = client.post("/api/v1/jobs", json=sample_payload())
     assert response.status_code == 202
     job = response.json()
     assert job["total"] == 1
-    status = client.get(f"/api/v1/jobs/{job['job_id']}").json()
+    status = client.get("/api/v1/jobs/" + job["job_id"]).json()
     assert status["completed"] == 1
     assert status["recipients"][0]["status"] == "completed"
 
@@ -41,7 +46,7 @@ def test_create_job_and_generation_status():
 def test_invalid_recipient_is_reported_without_blocking_valid_one():
     payload = sample_payload()
     payload["recipients"].append({"name": "", "email": "not-an-email"})
-    result = client.post("/api/v1/jobs", json=payload).json()
+    result = get_finished_job(payload)
     assert result["completed"] == 1
     assert result["failed"] == 1
     assert result["recipients"][1]["error"]
@@ -58,7 +63,7 @@ def test_certificate_failure_does_not_stop_other_recipients(monkeypatch):
     monkeypatch.setattr(main_module, "create_certificate", fail_for_jordan)
     payload = sample_payload()
     payload["recipients"].append({"name": "Jordan Lee", "email": "jordan@example.com"})
-    result = client.post("/api/v1/jobs", json=payload).json()
+    result = get_finished_job(payload)
 
     assert result["completed"] == 1
     assert result["failed"] == 1
@@ -67,9 +72,10 @@ def test_certificate_failure_does_not_stop_other_recipients(monkeypatch):
 
 def test_certificate_can_be_downloaded_individually_and_as_zip():
     job = client.post("/api/v1/jobs", json=sample_payload()).json()
-    recipient_id = job["recipients"][0]["id"]
-    individual = client.get(f"/api/v1/jobs/{job['job_id']}/certificates/{recipient_id}")
-    bundle = client.get(f"/api/v1/jobs/{job['job_id']}/certificates")
+    status = client.get("/api/v1/jobs/" + job["job_id"]).json()
+    recipient_id = status["recipients"][0]["id"]
+    individual = client.get("/api/v1/jobs/" + job["job_id"] + "/certificates/" + str(recipient_id))
+    bundle = client.get("/api/v1/jobs/" + job["job_id"] + "/certificates")
     assert individual.status_code == 200 and individual.content.startswith(b"%PDF")
     assert bundle.status_code == 200 and bundle.headers["content-type"] == "application/zip"
 
