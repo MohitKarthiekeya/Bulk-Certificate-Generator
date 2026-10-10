@@ -1,6 +1,5 @@
 """Core API tests. Set DATABASE_URL and CERTIFICATE_STORAGE to isolated temp paths when running."""
 import os
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +8,7 @@ os.environ["DATABASE_URL"] = "sqlite:///./test_certificates.db"
 os.environ["CERTIFICATE_STORAGE"] = "./test_storage"
 
 from app.database import Base, engine  # noqa: E402
+from app import main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
 
 Base.metadata.create_all(bind=engine)
@@ -21,7 +21,6 @@ def clean_data():
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
-    Path("test_certificates.db").unlink(missing_ok=True)
 
 
 def sample_payload():
@@ -46,6 +45,24 @@ def test_invalid_recipient_is_reported_without_blocking_valid_one():
     assert result["completed"] == 1
     assert result["failed"] == 1
     assert result["recipients"][1]["error"]
+
+
+def test_certificate_failure_does_not_stop_other_recipients(monkeypatch):
+    original_generator = main_module.create_certificate
+
+    def fail_for_jordan(*args, **kwargs):
+        if kwargs.get("name") == "Jordan Lee":
+            raise RuntimeError("simulated rendering problem")
+        return original_generator(*args, **kwargs)
+
+    monkeypatch.setattr(main_module, "create_certificate", fail_for_jordan)
+    payload = sample_payload()
+    payload["recipients"].append({"name": "Jordan Lee", "email": "jordan@example.com"})
+    result = client.post("/api/v1/jobs", json=payload).json()
+
+    assert result["completed"] == 1
+    assert result["failed"] == 1
+    assert result["recipients"][1]["status"] == "failed"
 
 
 def test_certificate_can_be_downloaded_individually_and_as_zip():
